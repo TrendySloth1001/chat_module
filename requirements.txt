@@ -1,4 +1,6 @@
 PyQt5
 QScintilla
 jedi
-pygments 
+pygments
+websockets
+websocket-client 

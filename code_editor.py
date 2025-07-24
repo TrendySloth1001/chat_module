@@ -1,13 +1,19 @@
 import sys
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QAction, QTabWidget, QWidget, QVBoxLayout, QMessageBox, QInputDialog, QLineEdit, QToolBar, QSplitter, QTreeView, QFileSystemModel, QMenu, QStackedWidget, QPushButton, QLabel, QListWidget, QHBoxLayout)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QAction, QTabWidget, QWidget, QVBoxLayout, QMessageBox, QInputDialog, QLineEdit, QToolBar, QSplitter, QTreeView, QFileSystemModel, QMenu, QStackedWidget, QPushButton, QLabel, QListWidget, QHBoxLayout, QStatusBar)
 from PyQt5.QtGui import QIcon
 from PyQt5.Qsci import QsciScintilla, QsciLexerPython, QsciLexerCPP, QsciLexerJavaScript
-from PyQt5.QtCore import Qt, QModelIndex
+from PyQt5.QtCore import Qt, QModelIndex, pyqtSignal
 import jedi
 from pygments.lexers import HtmlLexer, CssLexer, JavascriptLexer
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QToolTip
+import uuid
+import threading
+import websocket
+import json
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QApplication
+from PyQt5.QtGui import QClipboard
 
 class CodeEditor(QsciScintilla):
     def __init__(self, parent=None, language='python'):
@@ -275,11 +281,13 @@ class FileExplorer(QTreeView):
             self.setStyleSheet('')
 
 class HomePage(QWidget):
-    def __init__(self, open_project_callback, new_file_callback, open_recent_callback, theme='light'):
+    def __init__(self, open_project_callback, new_file_callback, open_recent_callback, theme='light', create_session_callback=None, join_session_callback=None):
         super().__init__()
         self.open_project_callback = open_project_callback
         self.new_file_callback = new_file_callback
         self.open_recent_callback = open_recent_callback
+        self.create_session_callback = create_session_callback
+        self.join_session_callback = join_session_callback
         self.theme = theme
         self.init_ui()
 
@@ -299,6 +307,16 @@ class HomePage(QWidget):
         btn_new_file.setFixedHeight(40)
         btn_new_file.clicked.connect(self.new_file_callback)
         layout.addWidget(btn_new_file)
+
+        btn_create_session = QPushButton('Create Session')
+        btn_create_session.setFixedHeight(40)
+        btn_create_session.clicked.connect(self.create_session_callback)
+        layout.addWidget(btn_create_session)
+
+        btn_join_session = QPushButton('Join Session')
+        btn_join_session.setFixedHeight(40)
+        btn_join_session.clicked.connect(self.join_session_callback)
+        layout.addWidget(btn_join_session)
 
         layout.addSpacing(20)
         recent_label = QLabel('Recent Files/Projects')
@@ -324,7 +342,34 @@ class HomePage(QWidget):
         else:
             self.setStyleSheet('')
 
+class SessionCreatedDialog(QDialog):
+    def __init__(self, session_id, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Session Created')
+        layout = QVBoxLayout()
+        label = QLabel('Share this session link to collaborate:')
+        layout.addWidget(label)
+        hbox = QHBoxLayout()
+        self.link_label = QLabel(session_id)
+        hbox.addWidget(self.link_label)
+        copy_btn = QPushButton('Copy')
+        copy_btn.clicked.connect(self.copy_link)
+        hbox.addWidget(copy_btn)
+        layout.addLayout(hbox)
+        ok_btn = QPushButton('OK')
+        ok_btn.clicked.connect(self.accept)
+        layout.addWidget(ok_btn)
+        self.setLayout(layout)
+
+    def copy_link(self):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.link_label.text())
+
 class MainWindow(QMainWindow):
+    collab_update_signal = pyqtSignal(str, str)  # file_path, content
+    collab_open_file_signal = pyqtSignal(str, str)  # file_path, content
+    collab_presence_signal = pyqtSignal(list)  # user list
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle('PyCode - Python Code Editor')
@@ -332,13 +377,22 @@ class MainWindow(QMainWindow):
         self.theme = 'light'
         self.recent_files = []
         self.stacked = QStackedWidget()
-        self.home_page = HomePage(self.open_project_from_home, self.new_file_from_home, self.open_recent_from_home, self.theme)
+        self.home_page = HomePage(self.open_project_from_home, self.new_file_from_home, self.open_recent_from_home, self.theme, self.create_session, self.join_session)
         self.stacked.addWidget(self.home_page)
         self.editor_widget = QWidget()
         self.init_editor_ui()
         self.stacked.addWidget(self.editor_widget)
         self.setCentralWidget(self.stacked)
         self.show_home()
+        self.session_id = None
+        self.collab_update_signal.connect(self.apply_collab_update)
+        self.collab_open_file_signal.connect(self.apply_collab_open_file)
+        self.collab_presence_signal.connect(self.update_presence)
+        self.open_files = {}  # file_path: tab index
+        self.user_id = None
+        self.users_in_session = []
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
 
     def show_home(self):
         self.home_page.set_recent(self.recent_files)
@@ -449,6 +503,7 @@ class MainWindow(QMainWindow):
         idx = self.tabs.addTab(tab, 'Untitled')
         self.tabs.setCurrentIndex(idx)
         self.apply_theme_to_tab(tab)
+        tab.editor.textChanged.connect(self.on_editor_text_changed_collab)
 
     def open_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, 'Open File', '', 'All Files (*);;Python (*.py);;C++ (*.cpp *.h);;JavaScript (*.js)')
@@ -458,14 +513,22 @@ class MainWindow(QMainWindow):
     def open_file_by_path(self, file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
-        ext = file_path.split('.')[-1]
-        language = 'python' if ext == 'py' else 'cpp' if ext in ['cpp', 'h'] else 'js' if ext == 'js' else 'python'
+        language = self.detect_language(file_path)
         tab = EditorTab(file_path=file_path, language=language)
         tab.editor.setText(text)
         idx = self.tabs.addTab(tab, os.path.basename(file_path))
         self.tabs.setCurrentIndex(idx)
         self.apply_theme_to_tab(tab)
         self.add_recent(file_path)
+        self.open_files[file_path] = idx
+        tab.editor.textChanged.connect(self.on_editor_text_changed_collab)
+        # If in collab session, broadcast file open
+        if hasattr(self, 'collab_ws') and self.collab_ws and self.collab_ws.sock and self.collab_ws.sock.connected:
+            msg = json.dumps({'type': 'open_file', 'file_path': file_path, 'content': text, 'session_id': self.session_id})
+            try:
+                self.collab_ws.send(msg)
+            except Exception:
+                pass
 
     def open_file_from_explorer(self, file_path):
         self.open_file_by_path(file_path)
@@ -563,6 +626,119 @@ class MainWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+    def start_collab_client(self):
+        self.collab_ws = websocket.WebSocketApp(
+            'ws://localhost:8765',
+            on_open=self.on_collab_open,
+            on_message=self.on_collab_message,
+            on_close=self.on_collab_close,
+            on_error=self.on_collab_error
+        )
+        self.collab_thread = threading.Thread(target=self.collab_ws.run_forever, daemon=True)
+        self.collab_thread.start()
+        self._collab_ignore_next = False
+        self.connect_editor_signal()
+        self.tabs.currentChanged.connect(self.connect_editor_signal)
+
+    def create_session(self):
+        session_id = str(uuid.uuid4())
+        self.session_id = session_id
+        dlg = SessionCreatedDialog(session_id, self)
+        dlg.exec_()
+        self.show_editor()
+        self.start_collab_client()
+
+    def join_session(self):
+        session_id, ok = QInputDialog.getText(self, 'Join Session', 'Enter session link:')
+        if ok and session_id:
+            self.session_id = session_id
+            self.show_editor()
+            self.start_collab_client()
+
+
+
+    def on_collab_open(self, ws):
+        join_msg = json.dumps({'type': 'join', 'session_id': self.session_id})
+        ws.send(join_msg)
+
+    def on_collab_message(self, ws, message):
+        data = json.loads(message)
+        if data.get('type') == 'edit':
+            file_path = data.get('file_path')
+            content = data.get('content')
+            self.collab_update_signal.emit(file_path, content)
+        elif data.get('type') == 'open_file':
+            file_path = data.get('file_path')
+            content = data.get('content')
+            self.collab_open_file_signal.emit(file_path, content)
+        elif data.get('type') == 'presence':
+            users = data.get('users', [])
+            self.collab_presence_signal.emit(users)
+
+    def on_collab_close(self, ws, *args):
+        pass
+
+    def on_collab_error(self, ws, error):
+        print('Collab error:', error)
+
+    def apply_collab_update(self, file_path, content):
+        # Only update if this file is open and current
+        idx = self.open_files.get(file_path)
+        if idx is not None and self.tabs.currentIndex() == idx:
+            editor = self.tabs.widget(idx).editor
+            if editor.text() != content:
+                cursor = editor.getCursorPosition()
+                self._collab_ignore_next = True
+                editor.setText(content)
+                editor.setCursorPosition(*cursor)
+
+    def apply_collab_open_file(self, file_path, content):
+        # If file is already open, switch to it; else open new tab
+        idx = self.open_files.get(file_path)
+        if idx is not None:
+            self.tabs.setCurrentIndex(idx)
+        else:
+            tab = EditorTab(file_path=file_path, language=self.detect_language(file_path))
+            tab.editor.setText(content)
+            idx = self.tabs.addTab(tab, os.path.basename(file_path))
+            self.tabs.setCurrentIndex(idx)
+            self.open_files[file_path] = idx
+            self.apply_theme_to_tab(tab)
+        # Connect editor signal for this tab
+        self.tabs.widget(idx).editor.textChanged.connect(self.on_editor_text_changed_collab)
+
+    def detect_language(self, file_path):
+        ext = file_path.split('.')[-1]
+        return 'python' if ext == 'py' else 'cpp' if ext in ['cpp', 'h'] else 'js' if ext == 'js' else 'python'
+
+    def on_editor_text_changed_collab(self):
+        if getattr(self, '_collab_ignore_next', False):
+            self._collab_ignore_next = False
+            return
+        if hasattr(self, 'collab_ws') and self.collab_ws and self.collab_ws.sock and self.collab_ws.sock.connected:
+            tab = self.tabs.currentWidget()
+            if tab and hasattr(tab, 'file_path'):
+                content = tab.editor.text()
+                msg = json.dumps({'type': 'edit', 'file_path': tab.file_path, 'content': content, 'session_id': self.session_id})
+                try:
+                    self.collab_ws.send(msg)
+                except Exception:
+                    pass
+
+    def update_presence(self, users):
+        self.users_in_session = users
+        self.status_bar.showMessage(f'Users in session: {len(users)} | IDs: {", ".join(users)}')
+
+    def connect_editor_signal(self):
+        try:
+            self.tabs.currentWidget().editor.textChanged.disconnect(self.on_editor_text_changed_collab)
+        except Exception:
+            pass
+        try:
+            self.tabs.currentWidget().editor.textChanged.connect(self.on_editor_text_changed_collab)
+        except Exception:
+            pass
 
 def main():
     app = QApplication(sys.argv)
