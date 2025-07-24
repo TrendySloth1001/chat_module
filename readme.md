@@ -5,6 +5,73 @@ This project was developed as part of the Semester 5 curriculum. It demonstrates
 
 ---
 
+## ⚠️ Note on Diagrams
+**GitHub does not natively render Mermaid diagrams in README files.**
+- To view the architecture and Gantt charts, use a local Markdown viewer that supports Mermaid, or paste the diagram code into [mermaid.live](https://mermaid.live/).
+
+---
+
+## Known Failures & Limitations
+
+### 1. Live Editing Not Always Working Reliably
+- **Symptom:** Sometimes, when two users edit the same file in the same session, changes are not reflected in the other editor, or only one direction works.
+- **Where:**
+    - `code_editor.py`: `on_editor_text_changed_collab`, `apply_collab_update`, `on_collab_message`, `connect_editor_signal`
+    - `collab_server.py`: `handler` function, session/user management
+- **Why:**
+    - The current implementation sends the full file content on every change, and only for the currently active tab. If users open different files or tabs, or if the signal is not connected properly (e.g., after switching tabs), updates may not be sent or received.
+    - There is no operational transform (OT) or CRDT logic, so concurrent edits can overwrite each other or cause race conditions.
+    - The WebSocket client may not always reconnect or handle dropped connections robustly.
+- **What would fix it:**
+    - Implementing per-cursor/line sync, or using an OT/CRDT library for true concurrent editing.
+    - Ensuring the signal is always connected for the current tab, and that all file open/close events are broadcast.
+    - Adding robust reconnection and error handling in the WebSocket client.
+
+### 2. Cursor/Selection Sync Not Implemented
+- **Symptom:** You cannot see where other users' cursors are, so it's easy to overwrite each other's work.
+- **Where:** Not implemented in any class yet.
+- **Why:** Would require sending cursor position and selection info with each edit, and rendering remote cursors in the editor.
+- **What would fix it:**
+    - Add cursor/selection sync messages and UI rendering for remote cursors.
+
+### 3. No Username/Avatar Support
+- **Symptom:** Users are only identified by UUIDs in the status bar.
+- **Where:** `collab_server.py` (session/user management), `code_editor.py` (status bar)
+- **Why:** No prompt for username, and no logic to send/display names or avatars.
+- **What would fix it:**
+    - Prompt for username on join, send to server, and broadcast/display in UI.
+
+### 4. No Integrated Chat or Comments
+- **Symptom:** No way to chat or leave comments in a session.
+- **Where:** Not implemented.
+- **Why:** Out of scope for MVP.
+- **What would fix it:**
+    - Add a chat panel and message types for chat.
+
+### 5. No Cloud/Remote Server Support
+- **Symptom:** Collaboration only works on localhost.
+- **Where:** `collab_server.py` (hardcoded to localhost)
+- **Why:** For simplicity and local testing.
+- **What would fix it:**
+    - Deploy the server to a public host and update the client connection URL.
+
+### 6. Error Handling for File Encoding
+- **Symptom:** Opening non-UTF-8 files can cause decode errors.
+- **Where:** `open_file_by_path` in `code_editor.py`
+- **Why:** Always tries to open files as UTF-8.
+- **What would fix it:**
+    - Add encoding detection or fallback to other encodings.
+
+---
+
+## Why These Failures Occur
+- **Concurrency:** Real-time collaborative editing is a hard problem; without OT/CRDT, race conditions and overwrites are common.
+- **Signal Management:** PyQt signals must be carefully managed when switching tabs or files; missing a connection means no sync.
+- **MVP Focus:** Some features (chat, usernames, remote server) were out of scope for the initial semester project.
+- **Error Handling:** Some edge cases (file encoding, reconnects) require more robust handling for production use.
+
+---
+
 ## Project Timeline (July 25, 2025 – November 30, 2025)
 
 ### Gantt Chart
