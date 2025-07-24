@@ -293,7 +293,7 @@ class HomePage(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout()
-        title = QLabel('PyCode Editor')
+        title = QLabel('DevHub Editor')
         title.setStyleSheet('font-size: 36px; font-weight: bold; margin-bottom: 30px;')
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
@@ -372,7 +372,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('PyCode - Python Code Editor')
+        self.setWindowTitle('DevHub - Python Code Editor')
         self.setGeometry(100, 100, 1200, 700)
         self.theme = 'light'
         self.recent_files = []
