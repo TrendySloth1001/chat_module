@@ -222,9 +222,9 @@ gantt
     section Collaboration
     WebSocket Server           :done,    collab1, 2025-09-15, 5d
     Client Integration         :done,    collab2, 2025-09-20, 7d
-    Real-time Sync             :pending,    collab3, 2025-09-27, 7d
-    File Open Sync             :pending,    collab4, 2025-10-04, 4d
-    Multi-file Collab          :pending,    collab5, 2025-10-08, 5d
+    Real-time Sync             :done,    collab3, 2025-09-27, 7d
+    File Open Sync             :done,    collab4, 2025-10-04, 4d
+    Multi-file Collab          :done,    collab5, 2025-10-08, 5d
     User Presence              :done,    collab6, 2025-10-13, 3d
     section UX & Error Handling
     Home Page & Navigation     :done,    ux1, 2025-10-16, 5d
