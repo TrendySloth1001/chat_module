@@ -1,4 +1,4 @@
-# PyCode Collaborative Editor
+# DevHUB Collaborative Editor
 
 ## Semester 5 Project
 This project was developed as part of the Semester 5 curriculum. It demonstrates advanced concepts in collaborative software, real-time networking, and modern UI/UX design using Python and PyQt5.
