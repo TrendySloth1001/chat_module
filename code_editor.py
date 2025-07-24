@@ -1,6 +1,6 @@
 import sys
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QAction, QTabWidget, QWidget, QVBoxLayout, QMessageBox, QInputDialog, QLineEdit, QToolBar, QSplitter, QTreeView, QFileSystemModel, QMenu)
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QAction, QTabWidget, QWidget, QVBoxLayout, QMessageBox, QInputDialog, QLineEdit, QToolBar, QSplitter, QTreeView, QFileSystemModel, QMenu, QStackedWidget, QPushButton, QLabel, QListWidget, QHBoxLayout)
 from PyQt5.QtGui import QIcon
 from PyQt5.Qsci import QsciScintilla, QsciLexerPython, QsciLexerCPP, QsciLexerJavaScript
 from PyQt5.QtCore import Qt, QModelIndex
@@ -163,10 +163,18 @@ class EditorTab(QWidget):
         self.file_path = file_path
         self.language = language
         self.editor = CodeEditor(language=language)
+        self.modified = False
+        self.editor.textChanged.connect(self.on_text_changed)
         layout = QVBoxLayout()
         layout.addWidget(self.editor)
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
+
+    def on_text_changed(self):
+        self.modified = True
+
+    def set_saved(self):
+        self.modified = False
 
 class FileExplorer(QTreeView):
     def __init__(self, parent=None):
@@ -266,12 +274,103 @@ class FileExplorer(QTreeView):
         else:
             self.setStyleSheet('')
 
+class HomePage(QWidget):
+    def __init__(self, open_project_callback, new_file_callback, open_recent_callback, theme='light'):
+        super().__init__()
+        self.open_project_callback = open_project_callback
+        self.new_file_callback = new_file_callback
+        self.open_recent_callback = open_recent_callback
+        self.theme = theme
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+        title = QLabel('PyCode Editor')
+        title.setStyleSheet('font-size: 36px; font-weight: bold; margin-bottom: 30px;')
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        btn_open_project = QPushButton('Open Project')
+        btn_open_project.setFixedHeight(40)
+        btn_open_project.clicked.connect(self.open_project_callback)
+        layout.addWidget(btn_open_project)
+
+        btn_new_file = QPushButton('New File')
+        btn_new_file.setFixedHeight(40)
+        btn_new_file.clicked.connect(self.new_file_callback)
+        layout.addWidget(btn_new_file)
+
+        layout.addSpacing(20)
+        recent_label = QLabel('Recent Files/Projects')
+        recent_label.setStyleSheet('font-size: 18px; font-weight: bold;')
+        layout.addWidget(recent_label)
+        self.recent_list = QListWidget()
+        self.recent_list.setFixedHeight(120)
+        self.recent_list.itemDoubleClicked.connect(self.open_recent_callback)
+        layout.addWidget(self.recent_list)
+        layout.addStretch()
+        self.setLayout(layout)
+        self.apply_theme(self.theme)
+
+    def set_recent(self, recent_items):
+        self.recent_list.clear()
+        for item in recent_items:
+            self.recent_list.addItem(item)
+
+    def apply_theme(self, theme):
+        self.theme = theme
+        if theme == 'dark':
+            self.setStyleSheet('QWidget { background: #232629; color: #f8f8f2; } QPushButton { background: #444; color: #f8f8f2; border-radius: 6px; } QPushButton:hover { background: #555; } QListWidget { background: #232629; color: #f8f8f2; } QLabel { color: #f8f8f2; }')
+        else:
+            self.setStyleSheet('')
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('PyCode - Python Code Editor')
         self.setGeometry(100, 100, 1200, 700)
         self.theme = 'light'
+        self.recent_files = []
+        self.stacked = QStackedWidget()
+        self.home_page = HomePage(self.open_project_from_home, self.new_file_from_home, self.open_recent_from_home, self.theme)
+        self.stacked.addWidget(self.home_page)
+        self.editor_widget = QWidget()
+        self.init_editor_ui()
+        self.stacked.addWidget(self.editor_widget)
+        self.setCentralWidget(self.stacked)
+        self.show_home()
+
+    def show_home(self):
+        self.home_page.set_recent(self.recent_files)
+        self.stacked.setCurrentWidget(self.home_page)
+        self.apply_theme()
+
+    def show_editor(self):
+        self.stacked.setCurrentWidget(self.editor_widget)
+        self.apply_theme()
+
+    def open_project_from_home(self):
+        self.show_editor()
+        self.open_project_dir()
+
+    def new_file_from_home(self):
+        self.show_editor()
+        self.new_tab()
+
+    def open_recent_from_home(self, item):
+        path = item.text()
+        self.show_editor()
+        if os.path.isdir(path):
+            self.file_explorer.set_project_dir(path)
+        else:
+            self.open_file_by_path(path)
+
+    def add_recent(self, path):
+        if path not in self.recent_files:
+            self.recent_files.insert(0, path)
+            self.recent_files = self.recent_files[:10]
+
+    def init_editor_ui(self):
         self.file_explorer = FileExplorer()
         self.file_explorer.set_file_open_callback(self.open_file_from_explorer)
         self.tabs = QTabWidget()
@@ -282,7 +381,9 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.file_explorer)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(splitter)
+        layout = QVBoxLayout()
+        layout.addWidget(splitter)
+        self.editor_widget.setLayout(layout)
         self.create_menu()
         self.create_toolbar()
         self.new_tab()
@@ -364,6 +465,7 @@ class MainWindow(QMainWindow):
         idx = self.tabs.addTab(tab, os.path.basename(file_path))
         self.tabs.setCurrentIndex(idx)
         self.apply_theme_to_tab(tab)
+        self.add_recent(file_path)
 
     def open_file_from_explorer(self, file_path):
         self.open_file_by_path(file_path)
@@ -373,6 +475,7 @@ class MainWindow(QMainWindow):
         if dir_path:
             self.file_explorer.set_project_dir(dir_path)
             self.apply_theme()
+            self.add_recent(dir_path)
 
     def save_file(self):
         tab = self.tabs.currentWidget()
@@ -380,6 +483,8 @@ class MainWindow(QMainWindow):
             with open(tab.file_path, 'w', encoding='utf-8') as f:
                 f.write(tab.editor.text())
             self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(tab.file_path))
+            if hasattr(tab, 'set_saved'):
+                tab.set_saved()
         else:
             self.save_file_as()
 
@@ -396,10 +501,18 @@ class MainWindow(QMainWindow):
             self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(file_path))
 
     def close_tab(self, index):
-        if self.tabs.count() > 1:
-            self.tabs.removeTab(index)
-        else:
-            self.close()
+        tab = self.tabs.widget(index)
+        if tab and getattr(tab, 'modified', False):
+            reply = QMessageBox.question(self, 'Unsaved Changes', 'This file has unsaved changes. Save before closing?', QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.Yes)
+            if reply == QMessageBox.Yes:
+                self.tabs.setCurrentIndex(index)
+                self.save_file()
+                tab.set_saved()
+            elif reply == QMessageBox.Cancel:
+                return
+        self.tabs.removeTab(index)
+        if self.tabs.count() == 0:
+            self.show_home()
 
     def find_text(self):
         tab = self.tabs.currentWidget()
@@ -424,12 +537,32 @@ class MainWindow(QMainWindow):
         for i in range(self.tabs.count()):
             self.apply_theme_to_tab(self.tabs.widget(i))
         self.file_explorer.apply_theme(self.theme)
+        self.home_page.apply_theme(self.theme)
 
     def apply_theme_to_tab(self, tab):
         if self.theme == 'dark':
             tab.editor.setCaretLineBackgroundColor(Qt.darkGray)
         else:
             tab.editor.setCaretLineBackgroundColor(Qt.lightGray)
+
+    def closeEvent(self, event):
+        # Check all tabs for unsaved changes
+        for i in range(self.tabs.count()):
+            tab = self.tabs.widget(i)
+            if tab and getattr(tab, 'modified', False):
+                self.tabs.setCurrentIndex(i)
+                reply = QMessageBox.question(self, 'Unsaved Changes', 'One or more files have unsaved changes. Save before exiting?', QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.Yes)
+                if reply == QMessageBox.Yes:
+                    self.save_file()
+                    tab.set_saved()
+                elif reply == QMessageBox.Cancel:
+                    event.ignore()
+                    return
+        reply = QMessageBox.question(self, 'Exit', 'Are you sure you want to exit?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
 
 def main():
     app = QApplication(sys.argv)
