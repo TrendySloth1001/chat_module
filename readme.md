@@ -11,6 +11,130 @@ This project was developed as part of the Semester 5 curriculum. It demonstrates
 
 ---
 
+## Specific Error Logs (with Explanations)
+
+### 1. WebSocket API Change
+```
+TypeError: handler() missing 1 required positional argument: 'path'
+```
+- **Where:** `collab_server.py` (handler function)
+- **Why:** The `websockets` library changed its API in v11+. Fixed by updating the handler signature.
+
+### 2. Segmentation Fault in PyQt
+```
+zsh: segmentation fault  python3 code_editor.py
+```
+- **Where:** `code_editor.py` (collaborative editing, thread updates)
+- **Why:** Directly updating Qt widgets from a background thread. Fixed by using `pyqtSignal` for thread-safe UI updates.
+
+### 3. AttributeError: WebSocketApp
+```
+AttributeError: module 'websocket' has no attribute 'WebSocketApp'. Did you mean: 'WebSocket'?
+```
+- **Where:** `code_editor.py` (WebSocket client)
+- **Why:** The `websocket-client` package was not installed, or a local file named `websocket.py` was shadowing the package. Fixed by installing the correct package and checking for naming conflicts.
+
+### 4. Connection Refused
+```
+Collab error: [Errno 61] Connection refused
+```
+- **Where:** `code_editor.py` (WebSocket client)
+- **Why:** The collaboration server was not running when the client tried to connect. Fixed by starting the server first.
+
+### 5. Editor Flicker
+```
+(Symptom, not a log) Editor flickers and cursor jumps on every edit.
+```
+- **Where:** `code_editor.py` (apply_collab_update)
+- **Why:** Full-text replacement on every edit. Fixed by only updating if content changes and preserving cursor position.
+
+### 6. No Change in Other Session
+```
+(Symptom, not a log) Changes in one editor are not reflected in the other.
+```
+- **Where:** `code_editor.py` (signal not connected after tab switch)
+- **Why:** The textChanged signal was not always connected to the current tab. Fixed by connecting on tab change.
+
+---
+
+## Architecture (Mermaid)
+```mermaid
+graph TD
+    subgraph Client
+        Home[HomePage] --> EditorUI
+        EditorUI --> WebSocketClient
+        EditorUI --> FileExplorer
+        EditorUI --> CodeTabs
+    end
+    subgraph Server
+        WS[WebSocketServer]
+        WS --> SessionState
+    end
+    WebSocketClient <--> WS
+```
+
+## Collaboration Flow (Mermaid)
+```mermaid
+sequenceDiagram
+    participant User1 as User 1 (Client)
+    participant User2 as User 2 (Client)
+    participant Server as WebSocket Server
+    User1->>Server: join (session_id)
+    User2->>Server: join (same session_id)
+    Server-->>User1: presence update
+    Server-->>User2: presence update
+    User1->>Server: open_file/edit (file_path, content)
+    Server-->>User2: open_file/edit (file_path, content)
+    User2->>Server: edit (file_path, content)
+    Server-->>User1: edit (file_path, content)
+```
+
+## File Explorer Structure (Mermaid)
+```mermaid
+classDiagram
+    FileExplorer <|-- QTreeView
+    FileExplorer : +set_project_dir(path)
+    FileExplorer : +create_new_file(index)
+    FileExplorer : +create_new_folder(index)
+    FileExplorer : +rename_item(index)
+    FileExplorer : +delete_item(index)
+    FileExplorer : +apply_theme(theme)
+```
+
+## MainWindow Collaboration Logic (Mermaid)
+```mermaid
+flowchart TD
+    A[User Action: Edit or Open File] --> B{In Collaboration Session?}
+    B -- Yes --> C[Send WebSocket Message]
+    B -- No --> D[Local Edit Only]
+    C --> E[Server Broadcast]
+    E --> F[Other Clients Receive]
+    F --> G[Update Editor via Signal]
+```
+
+## Save/Exit Flow (Mermaid)
+```mermaid
+sequenceDiagram
+    participant User
+    participant MainWindow
+    participant EditorTab
+    User->>MainWindow: Close Tab/Exit
+    MainWindow->>EditorTab: Check modified
+    alt Modified
+        MainWindow->>User: Prompt to save
+        User->>MainWindow: Yes/No/Cancel
+        alt Yes
+            MainWindow->>EditorTab: Save
+        end
+        alt Cancel
+            MainWindow->>User: Abort close
+        end
+    end
+    MainWindow->>User: Close/Return to Home
+```
+
+---
+
 ## Known Failures & Limitations
 
 ### 1. Live Editing Not Always Working Reliably
@@ -98,9 +222,9 @@ gantt
     section Collaboration
     WebSocket Server           :done,    collab1, 2025-09-15, 5d
     Client Integration         :done,    collab2, 2025-09-20, 7d
-    Real-time Sync             :done,    collab3, 2025-09-27, 7d
-    File Open Sync             :done,    collab4, 2025-10-04, 4d
-    Multi-file Collab          :done,    collab5, 2025-10-08, 5d
+    Real-time Sync             :pending,    collab3, 2025-09-27, 7d
+    File Open Sync             :pending,    collab4, 2025-10-04, 4d
+    Multi-file Collab          :pending,    collab5, 2025-10-08, 5d
     User Presence              :done,    collab6, 2025-10-13, 3d
     section UX & Error Handling
     Home Page & Navigation     :done,    ux1, 2025-10-16, 5d
@@ -111,7 +235,6 @@ gantt
     Manual Testing             :done,    test1, 2025-10-29, 7d
     Bug Fixes & Refactoring    :done,    test2, 2025-11-05, 7d
     Documentation              :done,    doc1, 2025-11-12, 7d
-    Final Review & Submission  :done,    doc2, 2025-11-19, 11d
 ```
 
 ### Module/Feature Breakdown
