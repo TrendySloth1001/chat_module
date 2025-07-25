@@ -202,7 +202,7 @@ sequenceDiagram
 ```mermaid
 gantt
     dateFormat  YYYY-MM-DD
-    title PyCode Project Timeline (Sem 5)
+    title DevHUB Project Timeline (Sem 5)
     section Planning & Research
     Requirements Gathering      :done,    des1, 2025-07-25, 7d
     Tech Stack Selection       :done,    des2, 2025-08-01, 3d
